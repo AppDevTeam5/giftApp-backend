@@ -1,0 +1,3 @@
+#!/bin/sh
+cd src
+gunicorn --preload -w 4 -b 0.0.0.0:8000 app:app
