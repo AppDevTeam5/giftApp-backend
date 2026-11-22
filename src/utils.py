@@ -26,10 +26,11 @@ def failure_response(message, code=404):
 def get_body():
     """
     Parses the JSON request body, returning an empty dict if it is
-    missing or not valid JSON
+    missing or not valid JSON. Reads the raw body, so it works even if the
+    app forgets the "Content-Type: application/json" header.
     """
     try:
-        body = json.loads(request.data)
+        body = json.loads(request.get_data(as_text=True))
     except (TypeError, ValueError):
         return {}
     if not isinstance(body, dict):
