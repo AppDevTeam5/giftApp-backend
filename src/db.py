@@ -64,6 +64,27 @@ class User(db.Model):
     )
 
     # --- Alya ---
+    # this user's personal special days (festivals have no owner)
+    special_days = db.relationship(
+        "SpecialDay", 
+        foreign_keys="SpecialDay.user_id",
+        back_populates="owner", 
+        cascade="delete"
+    )
+    # events this user hosts
+    hosted_events = db.relationship(
+        "Event", 
+        foreign_keys="Event.host_id",
+        back_populates="host", 
+        cascade="delete")
+    
+    # invitations this user received
+    invitations = db.relationship(
+        "Invitation", 
+        foreign_keys="Invitation.receiver_id",
+        back_populates="receiver", 
+        cascade="delete"
+    )
 
     def __init__(self, **kwargs):
         """
@@ -328,13 +349,111 @@ class WishlistItem(db.Model):
         return data
 
 
-# SpecialDay    a festival (user_id empty) or a personal date
-#               user_id (FK -> user, nullable), name, date
-#               User -> SpecialDay is one-to-many
+class SpecialDay(db.Model):
+    """
+    A date to remember. 
+    user_id is None for shared festivals (every user sees them).
+    """
 
-# Event         a group celebration
-#               host_id (FK -> user), title, starts_at, location, description
-#               User -> Event (host) is one-to-many
+    __tablename__ = "special_day"
 
-# Invitation  association table: event_id + user_id
-#               Event <-> User (guests) is many-to-many
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    name = db.Column(db.String, nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    recurring = db.Column(db.Boolean, nullable=False, default=True)  # repeats every year
+
+    owner = db.relationship("User", back_populates="special_days")
+
+    def serialize(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "date": date_to_str(self.date),
+            "recurring": self.recurring,
+            "shared": self.user_id is None,
+        }
+
+
+class Event(db.Model):
+    """
+    A group celebration hosted by one user. Other users are invited;
+    the ones who accept are the guests.
+    """
+
+    __tablename__ = "event"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    host_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.String, nullable=False)
+    starts_at = db.Column(db.DateTime, nullable=False)
+    location = db.Column(db.String, nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.now)
+
+    host = db.relationship("User", back_populates="hosted_events")
+    invitations = db.relationship(
+        "Invitation", back_populates="event", cascade="delete"
+    )
+
+    # Helpers
+    def guests(self):
+        """Users who accepted their invitation"""
+        return [i.receiver for i in self.invitations if i.status == "accepted"]
+
+    def simple_serialize(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "starts_at": date_to_str(self.starts_at),
+        }
+
+    def serialize(self):
+        data = self.simple_serialize()
+        data["location"] = self.location
+        data["description"] = self.description
+        data["host"] = self.host.simple_serialize()
+        data["invitations"] = [i.simple_serialize() for i in self.invitations]
+        return data
+
+
+INVITATION_STATUSES = ["pending", "accepted", "declined"]
+
+
+class Invitation(db.Model):
+    """
+    Links an Event to a User it was sent to (Event <-> User is many-to-many).
+    Stored as its own model so it can have a status. The inviter is not
+    stored: the event's host is the one inviting.
+    """
+
+    __tablename__ = "invitation"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id"), nullable=False)
+    receiver_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    status = db.Column(db.String, nullable=False, default="pending")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.now)
+
+    event = db.relationship("Event", back_populates="invitations")
+    receiver = db.relationship("User", back_populates="invitations")
+
+    __table_args__ = (
+        db.UniqueConstraint("event_id", "receiver_id", name="unique_invitation"),
+    )
+
+    def simple_serialize(self):
+        """Used inside an Event"""
+        return {
+            "id": self.id,
+            "receiver": self.receiver.simple_serialize(),
+            "status": self.status,
+        }
+
+    def serialize(self):
+        """Used in a user's invitation list"""
+        return {
+            "id": self.id,
+            "event": self.event.simple_serialize(),
+            "status": self.status,
+        }
